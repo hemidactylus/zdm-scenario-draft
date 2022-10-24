@@ -37,3 +37,116 @@ _Note_: the monitoring stack is left out of this picture for clarity.
 
 ## Steps
 
+### (HIDDEN) Initial setup, network+origin
+
+> Create password-enabled Cassandra for Origin:
+
+```
+# HIDDEN
+cd image_origin
+docker build . -t cassandra-auth:4.1
+cd ..
+```
+
+> Create network and start first node in it
+
+```
+# HIDDEN
+docker network create zdm_network
+docker run --name cassandra-origin-1 --network zdm_network -d cassandra-auth:4.1
+```
+
+> Wait 60-90 seconds, until this command works: `docker exec -it cassandra-origin-1 nodetool status`.
+> Then:
+
+```
+# HIDDEN
+docker run --name cassandra-origin-2 -d --network zdm_network -e CASSANDRA_SEEDS=cassandra-origin-1 cassandra-auth:4.1
+```
+
+> When the `nodetool` above gives two `UN`s, proceed:
+
+```
+docker run --name cassandra-origin-3 -d --network zdm_network -e CASSANDRA_SEEDS=cassandra-origin-1 cassandra-auth:4.1
+```
+
+> All good when the `nodetool` gives a triple `UN`.
+
+### (HIDDEN) Initial setup, dependencies for client application
+
+```
+# HIDDEN
+pip install -r client_application/requirements.txt
+```
+
+> _Note_: in local machine, please do use a virtualenv for this.
+
+### (HIDDEN) Initial setup, data in Origin
+
+> Copy the init scripts to origin node 1 and execute:
+
+```
+docker cp origin_prepare/origin_schema.cql cassandra-origin-1:/
+docker cp origin_prepare/origin_populate.cql cassandra-origin-1:/
+docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -f /origin_schema.cql
+docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -f /origin_populate.cql
+```
+
+> Check with
+
+```
+docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -e "select * from my_application_ks.user_status where user='eva';"
+```
+
+### Get your Astra DB ready
+
+- Create Astra DB (with `my_application_ks` keyspace)
+- Retrieve Secure Connect Bundle
+- Retrieve a token with "R/W User" role
+- Create Schema within keyspace (see below)
+
+**TODO**. **Warning**: with the "R/W User" token, you cannot create the schema in any other
+way than on the CQL Web Console. For the time being, we stick to it, so:
+Go to CQL Console and copy-paste the contents of `target/prepare/target_schema.cql`
+
+### Have a client application running
+
+On the base machine, run an API which connects to the DB (for now, Origin, but easy
+to switch). The API will be able to read and write, reachable with simple `curl` commands.
+
+Get the IP of the origin-1 machine,
+
+```
+CASSANDRA_CONTACT_POINT=`docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
+echo ${CASSANDRA_CONTACT_POINT}
+cd client_application
+```
+
+Prepare `.env` by copying `cp .env.sample .env` and editing it:
+`CASSANDRA_SEED`, `ASTRA_DB_SECURE_BUNDLE_PATH`, `ASTRA_DB_CLIENT_ID`, `ASTRA_DB_CLIENT_SECRET`.
+The `ZDM_PROXY_SEED` will come later, leave as it is for now.
+
+To run the API with connection to Origin, start as:
+
+```
+CLIENT_CONNECTION_MODE=CASSANDRA uvicorn api:app
+```
+
+This console will keep running the API. Experiment in another console with `curl`
+and optionally read the table itself as a further check:
+
+```
+curl -s localhost:8000/status/eva | jq
+curl -s -XPOST localhost:8000/status/eva/New | jq
+curl -s -XPOST localhost:8000/status/eva/ItIs_`date +'%H-%M-%S'` | jq
+```
+
+**TODO** Make these curl into a bash loop-with-sleep?
+
+**TODO** Different keyspace names, possible? We sure don't do that here, we could have a global keyspace name in `.env` for that matter.
+
+**TODO** Confirm that to connect to ZDM a single seed is OK and the rest is discovered?
+
+### Set up the ZDM Automation
+
+_start from here_
