@@ -98,12 +98,54 @@ docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -f /origin_po
 docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -e "select * from my_application_ks.user_status where user='eva';"
 ```
 
+### (HIDDEN) Initial setup, build Dind+Ubuntu+ssh image
+
+*TODO* License check for adaptation and re-use of: https://github.com/cruizba/ubuntu-dind
+
+> Build the DinD + ssh + ubuntu user image with:
+
+```
+# HIDDEN
+cd image_ubuntu-dind-ssh
+docker build . -t dind-ssh-ubuntu:18
+```
+
+### (HIDDEN) Initial setup, create the ZDM host containers
+
+```
+# HIDDEN
+docker run --name zdm-host-1 -d -i --privileged --network zdm_network dind-ssh-ubuntu:18
+docker run --name zdm-host-2 -d -i --privileged --network zdm_network dind-ssh-ubuntu:18
+docker run --name zdm-host-3 -d -i --privileged --network zdm_network dind-ssh-ubuntu:18
+```
+
+> Make sure ssh server is running and get the addresses. These IPs are needed later by the user as well.
+
+```
+# HIDDEN
+docker exec zdm-host-1 service ssh restart
+docker exec zdm-host-2 service ssh restart
+docker exec zdm-host-3 service ssh restart
+#
+ZDM_HOST_1_IP=`docker inspect zdm-host-1 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
+ZDM_HOST_2_IP=`docker inspect zdm-host-2 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
+ZDM_HOST_3_IP=`docker inspect zdm-host-3 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
+echo "ZDM Host IPs: ${DI_ZDM_HOST_1_IP} , ${DI_ZDM_HOST_2_IP} , ${DI_ZDM_HOST_3_IP}"
+```
+
+**TODO** a user-exposed "collect-addresses" script which neatly prints required infra info (mainly IPs).
+
+### (HIDDEN) Initial setup, create Ubuntu box for monitoring
+
+**TODO**: deal with the monitoring machine (an image with `systemd` is needed, no need for DinD there).
+
 ### Get your Astra DB ready
 
-- Create Astra DB (with `my_application_ks` keyspace)
-- Retrieve Secure Connect Bundle
-- Retrieve a token with "R/W User" role
-- Create Schema within keyspace (see below)
+- Create Astra DB (with `my_application_ks` keyspace);
+- Retrieve Secure Connect Bundle;
+- Retrieve a token with "R/W User" role;
+- Find the "Database ID" for your Astra DB instance;
+- Create Schema within keyspace (see below).
 
 **TODO**. **Warning**: with the "R/W User" token, you cannot create the schema in any other
 way than on the CQL Web Console. For the time being, we stick to it, so:
@@ -124,7 +166,8 @@ cd client_application
 
 Prepare `.env` by copying `cp .env.sample .env` and editing it:
 `CASSANDRA_SEED`, `ASTRA_DB_SECURE_BUNDLE_PATH`, `ASTRA_DB_CLIENT_ID`, `ASTRA_DB_CLIENT_SECRET`.
-The `ZDM_PROXY_SEED` will come later, leave as it is for now.
+You can also set the `ZDM_PROXY_SEED`, which will be used later, with the IP address of the first
+proxy host machine (`echo ${ZDM_HOST_1_IP}`).
 
 To run the API with connection to Origin, start as:
 
@@ -149,4 +192,242 @@ curl -s -XPOST localhost:8000/status/eva/ItIs_`date +'%H-%M-%S'` | jq
 
 ### Set up the ZDM Automation
 
-_start from here_
+> The base machine will be the jumphost, in whose Docker the automation creates
+> the `zdm-ansible-container`. When this container runs, it will reach the
+> three `zdm-host-[1,2,3]` containers, treating them as machines, and will deploy
+> the ZDM host in their own (DinD-based) Dockers.
+
+Time to download and run `zdm-util`, which creates the Ansible container which
+will then deploy the ZDM proxies. On the base machine:
+
+```
+cd running_zdm_util
+wget https://github.com/datastax/zdm-proxy-automation/releases/download/v2.0.0/zdm-util-linux-amd64-v2.0.0.tgz
+tar -xvf zdm-util-linux-amd64-v2.0.0.tgz
+rm zdm-util-linux-amd64-v2.0.0.tgz 
+```
+
+You will have to provide the following answers:
+
+- the private key location: `../zdm_host_private_key/zdm_deploy_key`;
+- the common prefix for the three ZDM hosts: **TODO** a script that outputs them to the user (no need for them to docker inspect, this would be behind-the-scenes);
+- no, you don't have an inventory file yet;
+- no, this is not for testing;
+- enter the three ZDM host IPs (see **TODO** above);
+- **TODO** the monitoring machine when it's there.
+
+Now run:
+
+```
+./zdm-util-v2.0.0
+```
+
+A `zdm-ansible-container` container is created and started for you (on the base machine's Docker).
+
+> **TODO** currently we need to manually attach the ansible container to the network with all other containers. This means that at this point we need to automate the following (or perhaps the whole thing might work in the default Docker network? this is to test):
+
+```
+# HIDDEN
+docker network connect zdm_network zdm-ansible-container 
+```
+
+> We also need to comment out, behind-the-scenes, two tasks in the Ansible install playbook,
+> which would install Docker, thereby replacing the modified DinD docker. This should happen
+> before the user launches the Ansible playbook. Namely, the tasks to comment from the Ansible
+> container's `/home/ubuntu/zdm-proxy-automation/ansible/deploy_zdm_proxy.yml` are:
+> (1) `- name: Update apt and install docker-ce` and (2) `- name: Uninstall incompatible Docker-py Module`.
+
+### Configure, deploy and start ZDM proxy
+
+Go to a shell on the `adm-ansible-container` with:
+
+```
+docker exec -it zdm-ansible-container bash
+```
+
+Once in the container, edit the proxy core configuration with:
+
+```
+cd zdm-proxy-automation/
+nano ansible/vars/zdm_proxy_core_config.yml   # or use 'vi' if you prefer
+```
+
+Edit and uncomment the following entries:
+
+- `origin_username` and `origin_password`: set both to "cassandra" (no quotes);
+- `origin_contact_points`: set it to the IP of `cassandra-origin-1`. **TODO** that would be the output of `docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`, but we will provide it to the user - no need for them to see behind the scenes;
+- `origin_port`: set to 9042;
+- `target_username` and `target_password`: set to Client ID and Client Secret from your Astra DB "R/W User Token";
+- `target_astra_db_id` is your Database ID from the Astra DB dashboard;
+- `target_astra_token` is the "token" string in your Astra DB "R/W User Token" (the string starting with `AstraCs:...`).
+
+You can now run the Ansible playbook that will provision and start the proxy containers in the three proxy hosts: still in the Ansible container, launch the command:
+
+```
+cd /home/ubuntu/zdm-proxy-automation/ansible
+ansible-playbook deploy_zdm_proxy.yml -i zdm_ansible_inventory
+```
+
+and watch the show.
+
+### Deploy the monitoring stack
+
+**TODO** as soon as the `systemd` requirement is met in the Ubuntu box containers.
+
+### Connect client applications to proxy
+
+On the base machine, make sure that `client_application/.env` has the
+`ZDM_PROXY_SEED` correctly set up with the IP of the first proxy host,
+then Ctrl-C the API and restart as:
+
+```
+CLIENT_CONNECTION_MODE=ZDM_PROXY uvicorn api:app
+```
+
+You can issue some `curl` commands as above to check that both reads and writes
+work. Note that you are still reading from Origin, but writing to both.
+
+You can also go to the Astra UI (or cqlsh to it) to check that newly-inserted
+rows (and only these for now) are present on Target, that is, Astra DB.
+
+### Migrate and validate data
+
+We will use DSBulk Migrator (in this demo there is a single simple table,
+and the one-off migration is not the main focus of this exercise anyway).
+
+On the base machine, clone and build the utility
+(the migration will be performed from this machine):
+
+```
+cd one_off_migration
+git clone https://github.com/datastax/dsbulk-migrator.git
+cd dsbulk-migrator/
+mvn clean package
+```
+
+After this finishes, you can start the migration, providing the necessary
+connection and schema information (the "import cluster" will be Origin and
+the "export cluster" will be Astra DB):
+
+**TODO** remind user of the info-collecting script here, but have them fill
+out the command below themselves, for better understanding:
+
+```
+java -jar target/dsbulk-migrator-1.0.0-SNAPSHOT-embedded-dsbulk.jar \
+  migrate-live \
+  -e \
+  --keyspaces=my_application_ks \
+  --export-host=IP_OF_CASSANDRA_ORIGIN_1_MACHINE \
+  --export-username=cassandra \
+  --export-password=cassandra \
+  --import-username=ASTRA_DB_TOKEN_CLIENT_ID \
+  --import-password=ASTRA_DB_TOKEN_CLIENT_SECRET \
+  --import-bundle=/PATH/TO/SECURE-CONNECT-BUNDLE.ZIP
+```
+
+Once this command has executed, you will see that now _all_ rows are on Astra
+DB as well, including those written prior to setting up the ZDM proxy.
+From this point on, the data on Target will not diverge from Origin until
+you decide to cut over and neglect Origin altogether.
+
+### Enable async dual reads
+
+**TODO**: to keep an eye on proxy restarts and everything, it might be desirable to keep
+three separate `sudo docker logs -f ...` commands on the three innermost
+containers, those running the ZDM proxy. To stick to real life, this
+should be achieved instructing the user to ssh and then call `sudo docker logs`.
+
+To enable read mirroring, open a shell in the `zdm-ansible-container` and edit
+`zdm_proxy_core_config.yml`:
+
+```
+docker exec -it zdm-ansible-container bash
+cd zdm-proxy-automation/
+nano ansible/vars/zdm_proxy_core_config.yml   # or use 'vi' if you prefer
+```
+
+The `primary_cluster` should still be `ORIGIN` at this point. Change the
+`read_mode` from `PRIMARY_ONLY` to `DUAL_ASYNC_ON_SECONDARY`.
+
+> **TODO** this playbook does not install (the regular, undesired here) docker-ce,
+> but it uninstalls a "python incompatible module", which we would like to remove here as well.
+> This means we should comment task `- name: Uninstall incompatible Docker-py Module` from
+> the `/home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml` playbook.
+
+While still in the Ansible container, launch a rolling update of the ZDM containers with:
+
+```
+cd /home/ubuntu/zdm-proxy-automation/ansible
+ansible-playbook rolling_update_zdm_proxy.yml -i zdm_ansible_inventory
+```
+
+The logs from the containers will stop one after the other: if you restart the
+`sudo docker logs` commands, you will see a very long line being logged that starts
+with something like
+
+```
+time="2022-10-21T22:43:15Z" level=info msg="Parsed configuration: {\"PrimaryCluster\":\"ORIGIN\",\"ReadMode\":\"DUAL_ASYNC_ON_SECONDARY\" [...]
+```
+
+To confirm that everything still works, send some `curl` requests to the
+running API (reading and writing) if you want.
+
+### Change read routing to Target
+
+The migration is done and the dual reads confirm everything works and
+there are no performance problems: let's start reading from Target already!
+
+Go to the `zdm-ansible-container` again and edit
+`zdm_proxy_core_config.yml` once more, this time changing `primary_cluster`
+to `TARGET`; then launch another rolling update.
+
+Again, you'll see the logs stopping - restart them if you want and look for
+the new setting being logged. Also send some requests to your API as before.
+
+Now, Target is the functioning primary, but origin is still being kept
+completely up to date.
+
+### Connect client applications directly to Target
+
+Until now we can bail out any time. After the following change we are effectively
+committing to the migration, with the app directly writing to Astra DB and finally
+skipping the ZDM (and Origin) altogether.
+
+Go to the console, on the base machine, where the API is running, Ctrl-C
+to stop it and restart it this time with: 
+
+```
+CLIENT_CONNECTION_MODE=ASTRA_DB uvicorn api:app
+```
+
+The API will still work and the migration is complete. You can destroy
+the whole ZDM infrastructure at this point.
+
+### Cleanup
+
+You can stop and remove the container running the `zdm-ansible-container`:
+on the base machine, launch
+
+```
+docker rm -f zdm-ansible-container
+```
+
+In a real migration scenario, you would also decommission the machines running
+the ZDM hosts and even the Origin Cassandra cluster. In this demo you can skip
+these steps (they will be removed anyway when the exercise is over).
+
+> In case cleanup is needed, six machines and one Docker network can be
+> destroyed at this point:
+
+```
+# HIDDEN
+docker rm -f cassandra-origin-1
+docker rm -f cassandra-origin-2
+docker rm -f cassandra-origin-3
+docker rm -f zdm-host-1
+docker rm -f zdm-host-2
+docker rm -f zdm-host-3
+docker network rm zdm_network
+```
+
+Congratulations, you completed the ZDM Migration Scenario!
