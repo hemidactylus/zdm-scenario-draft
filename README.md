@@ -35,7 +35,7 @@ Running `zdm-util` on the base machine creates the `zdm-ansible-container` conta
 the Ansible playbook will run to create the proxy containers in the three "Ubuntu" boxes.
 _Note_: the monitoring stack is left out of this picture for clarity.
 
-## Steps
+## (HIDDEN) Initial setup
 
 ### (HIDDEN) Initial setup, network+origin
 
@@ -139,6 +139,11 @@ echo "ZDM Host IPs: ${DI_ZDM_HOST_1_IP} , ${DI_ZDM_HOST_2_IP} , ${DI_ZDM_HOST_3_
 
 **TODO**: deal with the monitoring machine (an image with `systemd` is needed, no need for DinD there).
 
+## Preliminary steps
+
+**TODO** here describe the infrastructure to user and provide them with the
+IP-addresses script and have them run it.
+
 ### Get your Astra DB ready
 
 - Create Astra DB (with `my_application_ks` keyspace);
@@ -189,6 +194,8 @@ curl -s -XPOST localhost:8000/status/eva/ItIs_`date +'%H-%M-%S'` | jq
 **TODO** Different keyspace names, possible? We sure don't do that here, we could have a global keyspace name in `.env` for that matter.
 
 **TODO** Confirm that to connect to ZDM a single seed is OK and the rest is discovered?
+
+## Phase 1: Connect clients to ZDM Proxy
 
 ### Set up the ZDM Automation
 
@@ -290,7 +297,7 @@ work. Note that you are still reading from Origin, but writing to both.
 You can also go to the Astra UI (or cqlsh to it) to check that newly-inserted
 rows (and only these for now) are present on Target, that is, Astra DB.
 
-### Migrate and validate data
+## Phase 2: Migrate and validate data
 
 We will use DSBulk Migrator (in this demo there is a single simple table,
 and the one-off migration is not the main focus of this exercise anyway).
@@ -330,7 +337,7 @@ DB as well, including those written prior to setting up the ZDM proxy.
 From this point on, the data on Target will not diverge from Origin until
 you decide to cut over and neglect Origin altogether.
 
-### Enable async dual reads
+## Phase 3: Enable asynchronous dual reads
 
 **TODO**: to keep an eye on proxy restarts and everything, it might be desirable to keep
 three separate `sudo docker logs -f ...` commands on the three innermost
@@ -372,7 +379,7 @@ time="2022-10-21T22:43:15Z" level=info msg="Parsed configuration: {\"PrimaryClus
 To confirm that everything still works, send some `curl` requests to the
 running API (reading and writing) if you want.
 
-### Change read routing to Target
+## Phase 4: Change read routing to Target
 
 The migration is done and the dual reads confirm everything works and
 there are no performance problems: let's start reading from Target already!
@@ -387,7 +394,7 @@ the new setting being logged. Also send some requests to your API as before.
 Now, Target is the functioning primary, but origin is still being kept
 completely up to date.
 
-### Connect client applications directly to Target
+## Phase 5: Connect your client applications directly to Target
 
 Until now we can bail out any time. After the following change we are effectively
 committing to the migration, with the app directly writing to Astra DB and finally
@@ -403,7 +410,7 @@ CLIENT_CONNECTION_MODE=ASTRA_DB uvicorn api:app
 The API will still work and the migration is complete. You can destroy
 the whole ZDM infrastructure at this point.
 
-### Cleanup
+## Epilogue: cleanup
 
 You can stop and remove the container running the `zdm-ansible-container`:
 on the base machine, launch
