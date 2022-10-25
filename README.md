@@ -84,6 +84,8 @@ docker run --name cassandra-origin-3 -d --network zdm_network -e CASSANDRA_SEEDS
 
 > All good when the `nodetool` gives a triple `UN`.
 
+**TODO** make this cluster creation as short as possible. Now it takes several minutes (which would be spent by the user reading an intro page or something)
+
 ### (HIDDEN) Initial setup, dependencies for client application
 
 ```
