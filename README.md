@@ -12,6 +12,18 @@ In its current status, there are
 
 The latter will be in simple text with ordinary code blocks.
 
+**Table of Contents**
+
+- [Outline](#outline)
+- [HIDDEN Initial setup](#hidden-initial-setup)
+- [Preliminary steps](#preliminary-steps)
+- [Phase 1: Connect clients to ZDM Proxy](#phase-1-connect-clients-to-zdm-proxy)
+- [Phase 2: Migrate and validate data](#phase-2-migrate-and-validate-data)
+- [Phase 3: Enable asynchronous dual reads](#phase-3-enable-asynchronous-dual-reads)
+- [Phase 4: Change read routing to Target](#phase-4-change-read-routing-to-target)
+- [Phase 5: Connect your client applications directly to Target](#phase-5-connect-your-client-applications-directly-to-target)
+- [Epilogue: cleanup](#epilogue-cleanup)
+
 ### Outline
 
 Here we try to reproduce the full migration process, start-to-end, so that the scenario learner
