@@ -97,7 +97,7 @@ pip install -r client_application/requirements.txt
 
 ### (HIDDEN) Initial setup, data in Origin
 
-> Copy the init scripts to origin node 1 and execute:
+> Copy the init scripts to origin node 1 and execute them on a cluster node:
 
 ```
 docker cp origin_prepare/origin_schema.cql cassandra-origin-1:/
@@ -122,6 +122,7 @@ docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -e "select * 
 # HIDDEN
 cd image_ubuntu-dind-ssh
 docker build . -t dind-ssh-ubuntu:18
+cd ..
 ```
 
 ### (HIDDEN) Initial setup, create the ZDM host containers
@@ -144,10 +145,23 @@ docker exec zdm-host-3 service ssh restart
 ZDM_HOST_1_IP=`docker inspect zdm-host-1 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
 ZDM_HOST_2_IP=`docker inspect zdm-host-2 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
 ZDM_HOST_3_IP=`docker inspect zdm-host-3 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
-echo "ZDM Host IPs: ${DI_ZDM_HOST_1_IP} , ${DI_ZDM_HOST_2_IP} , ${DI_ZDM_HOST_3_IP}"
+echo "ZDM Host IPs: ${ZDM_HOST_1_IP} , ${ZDM_HOST_2_IP} , ${ZDM_HOST_3_IP}"
+#
+chmod 400 zdm_host_private_key/zdm_deploy_key
 ```
 
+**TODO** how to ensure ssh is restarted by itself when the container is started? There has to be a clean way.
+
 **TODO** a user-exposed "collect-addresses" script which neatly prints required infra info (mainly IPs).
+
+> As a check, these should definitely work: **TODO** have the user try these in the user-exposed "infra" paragraph
+
+```
+# both as superuser ...
+ssh -i zdm_host_private_key/zdm_deploy_key root@${ZDM_HOST_1_IP} -o StrictHostKeyChecking=no
+# and as 'ubuntu' user:
+ssh -i zdm_host_private_key/zdm_deploy_key ubuntu@${ZDM_HOST_1_IP} -o StrictHostKeyChecking=no
+```
 
 ### (HIDDEN) Initial setup, create Ubuntu box for monitoring
 
@@ -175,7 +189,7 @@ Go to CQL Console and copy-paste the contents of `target/prepare/target_schema.c
 On the base machine, run an API which connects to the DB (for now, Origin, but easy
 to switch). The API will be able to read and write, reachable with simple `curl` commands.
 
-Get the IP of the origin-1 machine,
+Get the IP of the origin-1 machine, **TODO** this would be hidden and replaced by a simple script printing the IPs (no need for user to know the internals)
 
 ```
 CASSANDRA_CONTACT_POINT=`docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
