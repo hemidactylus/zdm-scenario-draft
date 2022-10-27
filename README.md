@@ -89,6 +89,8 @@ docker run --name cassandra-origin-3 -d -e CASSANDRA_SEEDS=`docker inspect cassa
 
 **TODO** make this cluster creation as short as possible. Now it takes several minutes (which would be spent by the user reading an intro page or something)
 
+**TODO** Also consider making it into a single-node cluster (?) for speed and load on gitpod.
+
 ### (HIDDEN) Initial setup, dependencies for client application
 
 ```
@@ -120,19 +122,28 @@ docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -e "select * 
 **TODO** this is Gitpod-only
 
 ```
-DEBIAN_FRONTEND=noninteractive TZ=Europe/London apt install openssh-server -y
-sed 's/#PermitRootLogin prohibit-password/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config -i
-sed 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config -i
-sed 's/#AuthorizedKeysFile      .ssh/authorized_keys .ssh/authorized_keys2/AuthorizedKeysFile      .ssh/authorized_keys .ssh/authorized_keys2/' /etc/ssh/sshd_config -i
+DEBIAN_FRONTEND=noninteractive TZ=Europe/London sudo apt install openssh-server -y
+sudo sed 's/#PermitRootLogin prohibit-password/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config -i
+sudo sed 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config -i
+sudo sed 's/#ListenAddress/ListenAddress/' /etc/ssh/sshd_config -i
+sudo sed 's/#AuthorizedKeysFile/AuthorizedKeysFile/' /etc/ssh/sshd_config -i
+
+sudo mkdir /root/.ssh
+cat /workspace/zdm-scenario-draft/zdm_host_private_key/zdm_deploy_key.pub | sudo tee -a /root/.ssh/authorized_keys
+
+mkdir /home/gitpod/.ssh
+cat /workspace/zdm-scenario-draft/zdm_host_private_key/zdm_deploy_key.pub | tee -a /home/gitpod/.ssh/authorized_keys
+
+sudo service ssh restart
+
+chmod 400 zdm_host_private_key/zdm_deploy_key
 ```
 
-**TODO** add the pub key to `authorized_keys` !
+Now you can `ssh -i zdm_host_private_key/zdm_deploy_key gitpod@172.17.0.1 -o StrictHostKeyChecking=no`.
 
-**TODO** user there is `gitpod`, check here and later
+**TODO** user there is `gitpod`, check later
 
-**TODO** a user-exposed "collect-addresses" script which neatly prints required infra info (mainly IPs).
-
-**TODO** retrieve base machine's IP with `ip addr | grep docker0: -A 2 | grep inet | awk '{print $2}' | awk -F/ '{print $1}'`
+**TODO** use the `. find_addresses.sh` script for IP addresses env var and output
 
 ### (HIDDEN) Initial setup, handle for monitoring stack
 
@@ -163,17 +174,13 @@ to switch). The API will be able to read and write, reachable with simple `curl`
 Get the IP of the origin-1 machine, **TODO** this would be hidden and replaced by a simple script printing the IPs (no need for user to know the internals)
 
 ```
-CASSANDRA_CONTACT_POINT=`docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.bridge.IPAddress'`
-echo ${CASSANDRA_CONTACT_POINT}
 cd client_application
 ```
 
 Prepare `.env` by copying `cp .env.sample .env` and editing it:
-`CASSANDRA_SEED`, `ASTRA_DB_SECURE_BUNDLE_PATH`, `ASTRA_DB_CLIENT_ID`, `ASTRA_DB_CLIENT_SECRET`.
-You can also set the `ZDM_PROXY_SEED`, which will be used later, with the IP address of the first
-proxy host machine (`echo ${ZDM_HOST_1_IP}`).
 
-To run the API with connection to Origin, start as:
+- insert the IPs of the Cassandra seed and the ZDM host, as read by `. ../find_addresses.sh`, in `CASSANDRA_SEED` and `ZDM_PROXY_SEED`;
+- insert `ASTRA_DB_SECURE_BUNDLE_PATH`, `ASTRA_DB_CLIENT_ID`, `ASTRA_DB_CLIENT_SECRET` for your connection to Astra DB.
 
 ```
 CLIENT_CONNECTION_MODE=CASSANDRA uvicorn api:app
@@ -241,15 +248,38 @@ A `zdm-ansible-container` container is created and started for you (on the base 
 > (3) `- name: Update apt and install docker-ce` and (4) `- name: Uninstall incompatible Docker-py Module`.
 
 ```
+# (HIDDEN)
 docker exec -it zdm-ansible-container bash
+# once in ...
 nano /home/ubuntu/zdm-proxy-automation/ansible/deploy_zdm_proxy.yml
 # (comment the tasks, save and exit)
-exit
+exit # the container
 ```
 
-###
-### UP TO HERE
-###
+(HIDDEN) Also we must change the non-root user in the "ZDM host" (actually the Gitpod instance)
+to be `gitpod` and not `ubuntu`. This affects the inventory and the root-dir setting in the vars:
+
+```
+# (HIDDEN)
+docker exec -it zdm-ansible-container bash
+# once in ...
+sed -i 's/ansible_user=ubuntu/ansible_user=gitpod/' /home/ubuntu/zdm-proxy-automation/ansible/zdm_ansible_inventory
+sed 's/home\/ubuntu/home\/gitpod/' /home/ubuntu/zdm-proxy-automation/ansible/vars/zdm_playbook_internal_config.yml -i
+exit # the container
+```
+
+(HIDDEN) More trouble with the network interfaces and ipv4 addresses. The default_ipv4 from the ansible templates
+would use eth0 or something, hence 10.0.5.2 or something. Not the docker0 one (known to ansible in different ways).
+So we also edit file `templates/zdm_proxy_immutable_config.j2`, replacing `hostvars[inventory_hostname]['ansible_default_ipv4']['address']` with `inventory_hostname` (3 locations).
+Same for the rolling update and restart.
+**TODO** check if this might suggest a generalization of the playbook useful beyond the scenario.
+
+```
+# (HIDDEN)
+sed "s/hostvars\[inventory_hostname\]\['ansible_default_ipv4'\]\['address'\]/inventory_hostname/" /home/ubuntu/zdm-proxy-automation/ansible/templates/zdm_proxy_immutable_config.j2 -i
+sed "s/hostvars\[inventory_hostname\]\['ansible_default_ipv4'\]\['address'\]/inventory_hostname/" /home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml -i
+sed "s/hostvars\[inventory_hostname\]\['ansible_default_ipv4'\]\['address'\]/inventory_hostname/" /home/ubuntu/zdm-proxy-automation/ansible/rolling_restart_zdm_proxy.yml -i
+```
 
 ### Configure, deploy and start ZDM proxy
 
@@ -266,7 +296,7 @@ cd zdm-proxy-automation/
 nano ansible/vars/zdm_proxy_core_config.yml   # or use 'vi' if you prefer
 ```
 
-Edit and uncomment the following entries:
+Uncomment and edit the following entries:
 
 - `origin_username` and `origin_password`: set both to "cassandra" (no quotes);
 - `origin_contact_points`: set it to the IP of `cassandra-origin-1`. **TODO** that would be the output of `docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`, but we will provide it to the user - no need for them to see behind the scenes;
@@ -313,7 +343,7 @@ On the base machine, clone and build the utility
 (the migration will be performed from this machine):
 
 ```
-cd one_off_migration
+cd /workspace/zdm-scenario-draft/one_off_migration
 git clone https://github.com/datastax/dsbulk-migrator.git
 cd dsbulk-migrator/
 mvn clean package
@@ -346,10 +376,18 @@ you decide to cut over and neglect Origin altogether.
 
 ## Phase 3: Enable asynchronous dual reads
 
-**TODO**: to keep an eye on proxy restarts and everything, it might be desirable to keep
-three separate `sudo docker logs -f ...` commands on the three innermost
-containers, those running the ZDM proxy. To stick to real life, this
-should be achieved instructing the user to ssh and then call `sudo docker logs`.
+**TODO**: to keep an eye on proxy restarts and everything,
+it might be desirable to keep a view on `sudo docker logs -f ...`
+commands on the ZDM Proxy containers.
+To stick to real life, this is better achieved instructing the user
+to ssh and then call `sudo docker logs` (as opposed to the shortcut):
+
+```
+# In a new console:
+ssh -i zdm_host_private_key/zdm_deploy_key gitpod@$ZDM_HOST_IP -o StrictHostKeyChecking=no
+# once there...
+docker logs -f zdm-proxy-container
+```
 
 To enable read mirroring, open a shell in the `zdm-ansible-container` and edit
 `zdm_proxy_core_config.yml`:
@@ -435,13 +473,10 @@ these steps (they will be removed anyway when the exercise is over).
 
 ```
 # HIDDEN
+docker rm -f zdm-proxy-container
 docker rm -f cassandra-origin-1
 docker rm -f cassandra-origin-2
 docker rm -f cassandra-origin-3
-docker rm -f zdm-host-1
-docker rm -f zdm-host-2
-docker rm -f zdm-host-3
-docker network rm zdm_network
 ```
 
 Congratulations, you completed the ZDM Migration Scenario!
