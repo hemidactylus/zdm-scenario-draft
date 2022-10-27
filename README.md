@@ -29,22 +29,26 @@ The latter will be in simple text with ordinary code blocks.
 Here we try to reproduce the full migration process, start-to-end, so that the scenario learner
 will experience it "as in real life". But we want to package everything as Docker containers, so as to
 be able to run the whole thing within a Gitpod (and later Katapod) environment.
-This, under the tenet "the user shall not notice the difference with the real thing",
-entails a few challenges, such as:
 
-- the need for Docker images behaving as close as possible to actual Ubuntu boxes;
-- the need for most containers to speak to each other (including containers created by the automation);
-- the need for a sufficiently isolated docker-in-docker (mimicking what in real life would be docker in a separate physical machine).
+The ideal rule is "the user shall not notice the difference with the real thing".
+Unfortunately, due to the complications of having docker-in-docker situations
+(which run fine locally but raise hard problems within Gitpod which adds a further
+containerization layer beyond our jurisdiction), we had to find a compromise:
+namely, _instead of three Ubuntu containers playing the role of ZDM host machines,_
+_we will use the base machine itself as the one ZDM host._
 
-![Scenario architecture](images/zdm-scenario-architecture.png)
+**TODO** architecture diagram to change
+
+![Scenario architecture](pictures/zdm-scenario-architecture.png)
 
 The "base machine" (the only physical machine in the scenario) runs Docker for use by non-superuser.
 At this layer a sample API runs, connected alternatively to Origin/Target/Proxy and probed by simple `curl`.
-Prior to the user intervention, 6 containers are created and started: a 3-node Cassandra cluster (Origin)
-and three Ubuntu boxes, which will act as the proxy hosts: these run modified DinD images, providing
-a docker-in-docker (as well as ssh access and all that is needed).
-Running `zdm-util` on the base machine creates the `zdm-ansible-container` container, in which
-the Ansible playbook will run to create the proxy containers in the three "Ubuntu" boxes.
+Prior to the user intervention, 3 containers are created and started, with a Cassandra cluster (Origin).
+Running the `zdm-util` on the base machine creates the `zdm-ansible-container` container, in which
+the Ansible playbook will run: this, in turn, will reach _the base machine again_
+("thinking it is the ZDM host machine") and deploy a single-instance ZDM proxy container in it.
+To allow for connectivity (including back to the base machine),
+the `host` Docker network will be used throughout.
 _Note_: the monitoring stack is left out of this picture for clarity.
 
 ## (HIDDEN) Initial setup
@@ -60,12 +64,11 @@ docker build . -t cassandra-auth:4.1
 cd ..
 ```
 
-> Create network and start first node in it
+> Start first node
 
 ```
 # HIDDEN
-docker network create zdm_network
-docker run --name cassandra-origin-1 --network zdm_network -d cassandra-auth:4.1
+docker run --name cassandra-origin-1 -d cassandra-auth:4.1
 ```
 
 > Wait 60-90 seconds, until this command works: `docker exec -it cassandra-origin-1 nodetool status`.
@@ -73,13 +76,13 @@ docker run --name cassandra-origin-1 --network zdm_network -d cassandra-auth:4.1
 
 ```
 # HIDDEN
-docker run --name cassandra-origin-2 -d --network zdm_network -e CASSANDRA_SEEDS=cassandra-origin-1 cassandra-auth:4.1
+docker run --name cassandra-origin-2 -d -e CASSANDRA_SEEDS=`docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.bridge.IPAddress'` cassandra-auth:4.1
 ```
 
 > When the `nodetool` above gives two `UN`s, proceed:
 
 ```
-docker run --name cassandra-origin-3 -d --network zdm_network -e CASSANDRA_SEEDS=cassandra-origin-1 cassandra-auth:4.1
+docker run --name cassandra-origin-3 -d -e CASSANDRA_SEEDS=`docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.bridge.IPAddress'` cassandra-auth:4.1
 ```
 
 > All good when the `nodetool` gives a triple `UN`.
@@ -112,58 +115,26 @@ docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -f /origin_po
 docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -e "select * from my_application_ks.user_status where user='eva';"
 ```
 
-### (HIDDEN) Initial setup, build Dind+Ubuntu+ssh image
+### (HIDDEN) Initial setup, ensure base machine runs ssh server
 
-*TODO* License check for adaptation and re-use of: https://github.com/cruizba/ubuntu-dind
-
-> Build the DinD + ssh + ubuntu user image with:
+**TODO** this is Gitpod-only
 
 ```
-# HIDDEN
-cd image_ubuntu-dind-ssh
-docker build . -t dind-ssh-ubuntu:18
-cd ..
+DEBIAN_FRONTEND=noninteractive TZ=Europe/London apt install openssh-server -y
+sed 's/#PermitRootLogin prohibit-password/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config -i
+sed 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config -i
+sed 's/#AuthorizedKeysFile      .ssh/authorized_keys .ssh/authorized_keys2/AuthorizedKeysFile      .ssh/authorized_keys .ssh/authorized_keys2/' /etc/ssh/sshd_config -i
 ```
 
-### (HIDDEN) Initial setup, create the ZDM host containers
+**TODO** add the pub key to `authorized_keys` !
 
-```
-# HIDDEN
-docker run --name zdm-host-1 -d -i --privileged --network zdm_network dind-ssh-ubuntu:18
-docker run --name zdm-host-2 -d -i --privileged --network zdm_network dind-ssh-ubuntu:18
-docker run --name zdm-host-3 -d -i --privileged --network zdm_network dind-ssh-ubuntu:18
-```
-
-> Make sure ssh server is running and get the addresses. These IPs are needed later by the user as well.
-
-```
-# HIDDEN
-docker exec zdm-host-1 service ssh restart
-docker exec zdm-host-2 service ssh restart
-docker exec zdm-host-3 service ssh restart
-#
-ZDM_HOST_1_IP=`docker inspect zdm-host-1 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
-ZDM_HOST_2_IP=`docker inspect zdm-host-2 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
-ZDM_HOST_3_IP=`docker inspect zdm-host-3 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
-echo "ZDM Host IPs: ${ZDM_HOST_1_IP} , ${ZDM_HOST_2_IP} , ${ZDM_HOST_3_IP}"
-#
-chmod 400 zdm_host_private_key/zdm_deploy_key
-```
-
-**TODO** how to ensure ssh is restarted by itself when the container is started? There has to be a clean way.
+**TODO** user there is `gitpod`, check here and later
 
 **TODO** a user-exposed "collect-addresses" script which neatly prints required infra info (mainly IPs).
 
-> As a check, these should definitely work: **TODO** have the user try these in the user-exposed "infra" paragraph
+**TODO** retrieve base machine's IP with `ip addr | grep docker0: -A 2 | grep inet | awk '{print $2}' | awk -F/ '{print $1}'`
 
-```
-# both as superuser ...
-ssh -i zdm_host_private_key/zdm_deploy_key root@${ZDM_HOST_1_IP} -o StrictHostKeyChecking=no
-# and as 'ubuntu' user:
-ssh -i zdm_host_private_key/zdm_deploy_key ubuntu@${ZDM_HOST_1_IP} -o StrictHostKeyChecking=no
-```
-
-### (HIDDEN) Initial setup, create Ubuntu box for monitoring
+### (HIDDEN) Initial setup, handle for monitoring stack
 
 **TODO**: deal with the monitoring machine (an image with `systemd` is needed, no need for DinD there).
 
@@ -192,7 +163,7 @@ to switch). The API will be able to read and write, reachable with simple `curl`
 Get the IP of the origin-1 machine, **TODO** this would be hidden and replaced by a simple script printing the IPs (no need for user to know the internals)
 
 ```
-CASSANDRA_CONTACT_POINT=`docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`
+CASSANDRA_CONTACT_POINT=`docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.bridge.IPAddress'`
 echo ${CASSANDRA_CONTACT_POINT}
 cd client_application
 ```
@@ -228,12 +199,13 @@ curl -s -XPOST localhost:8000/status/eva/ItIs_`date +'%H-%M-%S'` | jq
 ### Set up the ZDM Automation
 
 > The base machine will be the jumphost, in whose Docker the automation creates
-> the `zdm-ansible-container`. When this container runs, it will reach the
-> three `zdm-host-[1,2,3]` containers, treating them as machines, and will deploy
-> the ZDM host in their own (DinD-based) Dockers.
+> the `zdm-ansible-container`. When this container runs, it will reach
+> _the base machine itself (playing the role of the ZDM Host Ubuntu box)_
+> and will deploy the ZDM host in its Docker, thus effectively
+> alongside the pre-existing Cassandra cluster.
 
 Time to download and run `zdm-util`, which creates the Ansible container which
-will then deploy the ZDM proxies. On the base machine:
+will then deploy the ZDM proxies. On the base machine, from the repo's root:
 
 ```
 cd running_zdm_util
@@ -245,10 +217,10 @@ rm zdm-util-linux-amd64-v2.0.0.tgz
 You will have to provide the following answers:
 
 - the private key location: `../zdm_host_private_key/zdm_deploy_key`;
-- the common prefix for the three ZDM hosts: **TODO** a script that outputs them to the user (no need for them to docker inspect, this would be behind-the-scenes);
+- the network prefix for the ZDM host: **TODO** a script that outputs them to the user (no need for them to docker inspect, this would be behind-the-scenes);
 - no, you don't have an inventory file yet;
-- no, this is not for testing;
-- enter the three ZDM host IPs (see **TODO** above);
+- yes, this is for testing (so as to allow for a single ZDM host instead of the required three);
+- enter the IP for the ZDM host (see **TODO** above);
 - **TODO** the monitoring machine when it's there.
 
 Now run:
@@ -259,18 +231,25 @@ Now run:
 
 A `zdm-ansible-container` container is created and started for you (on the base machine's Docker).
 
-> **TODO** currently we need to manually attach the ansible container to the network with all other containers. This means that at this point we need to automate the following (or perhaps the whole thing might work in the default Docker network? this is to test):
+(HIDDEN) Tweak the playbook:
 
-```
-# HIDDEN
-docker network connect zdm_network zdm-ansible-container 
-```
-
-> We also need to comment out, behind-the-scenes, two tasks in the Ansible install playbook,
-> which would install Docker, thereby replacing the modified DinD docker. This should happen
+> We also need to comment out, behind-the-scenes, some tasks in the Ansible install playbook,
+> which would install Docker. This should happen
 > before the user launches the Ansible playbook. Namely, the tasks to comment from the Ansible
 > container's `/home/ubuntu/zdm-proxy-automation/ansible/deploy_zdm_proxy.yml` are:
-> (1) `- name: Update apt and install docker-ce` and (2) `- name: Uninstall incompatible Docker-py Module`.
+> (1) `- name: Add Docker GPG apt Key`, (2) `- name: Add Docker Repository`.
+> (3) `- name: Update apt and install docker-ce` and (4) `- name: Uninstall incompatible Docker-py Module`.
+
+```
+docker exec -it zdm-ansible-container bash
+nano /home/ubuntu/zdm-proxy-automation/ansible/deploy_zdm_proxy.yml
+# (comment the tasks, save and exit)
+exit
+```
+
+###
+### UP TO HERE
+###
 
 ### Configure, deploy and start ZDM proxy
 
