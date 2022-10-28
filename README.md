@@ -95,8 +95,6 @@ docker run --name cassandra-origin-3 -d -e CASSANDRA_SEEDS=`docker inspect cassa
 
 **TODO** make this cluster creation as short as possible. Now it takes several minutes (which would be spent by the user reading an intro page or something)
 
-**TODO** Also consider making it into a single-node cluster (?) for speed and load on gitpod.
-
 ### (HIDDEN) Initial setup, data in Origin
 
 > Copy the init scripts to origin node 1 and execute them on a cluster node:
