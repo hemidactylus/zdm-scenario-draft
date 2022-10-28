@@ -2,7 +2,7 @@
 
 USE my_application_ks;
 
-CREATE TABLE user_status (
+CREATE TABLE IF NOT EXISTS user_status (
   user    TEXT,
   when    TIMESTAMP,
   status  TEXT,

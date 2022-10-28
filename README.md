@@ -168,14 +168,14 @@ the involved machines, exporting them as environment variables for your convenie
 
 **TODO**. **Warning**: with the "R/W User" token, you cannot create the schema in any other
 way than on the CQL Web Console. For the time being, we stick to it, so:
-Go to CQL Console and copy-paste the contents of `target/prepare/target_schema.cql`
+Go to CQL Console and copy-paste the contents of `target_prepare/target_schema.cql`
 
 _Alternative way (requires a DB Admin token):_
 
 ```
 curl -Ls "https://dtsx.io/get-astra-cli" | bash
 . ~/.bashrc ; astra setup     # provide your AstraCS:... "DB Admin" token when prompted
-astra db cqlsh <DB_NAME> -f target/prepare/target_schema.cql
+astra db cqlsh <DB_NAME> -f target_prepare/target_schema.cql
 ```
 
 ### Have a client application running
@@ -230,7 +230,7 @@ rm zdm-util-linux-amd64-v2.0.0.tgz
 You will have to provide the following answers:
 
 - the private key location: `../zdm_host_private_key/zdm_deploy_key`;
-- the network prefix for the ZDM host: **TODO** a script that outputs them to the user (no need for them to docker inspect, this would be behind-the-scenes);
+- the network prefix for the ZDM host: if, for example, your ZDM host is `172.17.0.1` (as seen by `. ../find_addresses.sh`), you can provide `172.17.0.*` here;
 - no, you don't have an inventory file yet;
 - yes, this is for testing (so as to allow for a single ZDM host instead of the required three);
 - enter the IP for the ZDM host (see **TODO** above);
@@ -254,17 +254,15 @@ A `zdm-ansible-container` container is created and started for you (on the base 
 > (3) `- name: Update apt and install docker-ce` and (4) `- name: Uninstall incompatible Docker-py Module`.
 > Likewise, we shall remove the `- name: Uninstall incompatible Docker-py Module` task
 > from the `/home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml` playbook.
+> This tweak is automated with the help of a file-editing script:
 
 
 ```
-# (HIDDEN)
-docker exec -it zdm-ansible-container bash
-# once in ...
-nano /home/ubuntu/zdm-proxy-automation/ansible/deploy_zdm_proxy.yml
-# (comment the tasks, save and exit)
-nano /home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml
-# (comment the tasks, save and exit)
-exit # the container
+# HIDDEN
+# removing unwanted tasks from playbooks
+docker cp ../file_utils/block_remover.sh zdm-ansible-container:/home/ubuntu
+docker exec zdm-ansible-container /home/ubuntu/block_remover.sh "Add Docker GPG apt Key" "Install Docker Module for Python" /home/ubuntu/zdm-proxy-automation/ansible/deploy_zdm_proxy.yml
+docker exec zdm-ansible-container /home/ubuntu/block_remover.sh "Uninstall incompatible Docker-py Module" "Install Docker Module for Python" /home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml
 ```
 
 (HIDDEN) Also we must change the non-root user in the "ZDM host" (actually the Gitpod instance)
@@ -272,11 +270,8 @@ to be `gitpod` and not `ubuntu`. This affects the inventory and the root-dir set
 
 ```
 # (HIDDEN)
-docker exec -it zdm-ansible-container bash
-# once in ...
-sed -i 's/ansible_user=ubuntu/ansible_user=gitpod/' /home/ubuntu/zdm-proxy-automation/ansible/zdm_ansible_inventory
-sed 's/home\/ubuntu/home\/gitpod/' /home/ubuntu/zdm-proxy-automation/ansible/vars/zdm_playbook_internal_config.yml -i
-exit # the container
+docker exec zdm-ansible-container sed -i 's/ansible_user=ubuntu/ansible_user=gitpod/' /home/ubuntu/zdm-proxy-automation/ansible/zdm_ansible_inventory
+docker exec zdm-ansible-container sed 's/home\/ubuntu/home\/gitpod/' /home/ubuntu/zdm-proxy-automation/ansible/vars/zdm_playbook_internal_config.yml -i
 ```
 
 (HIDDEN) More trouble with the network interfaces and ipv4 addresses. The default_ipv4 from the ansible templates
@@ -286,9 +281,9 @@ Same for the rolling update and restart.
 
 ```
 # (HIDDEN)
-sed "s/hostvars\[inventory_hostname\]\['ansible_default_ipv4'\]\['address'\]/inventory_hostname/" /home/ubuntu/zdm-proxy-automation/ansible/templates/zdm_proxy_immutable_config.j2 -i
-sed "s/hostvars\[inventory_hostname\]\['ansible_default_ipv4'\]\['address'\]/inventory_hostname/" /home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml -i
-sed "s/hostvars\[inventory_hostname\]\['ansible_default_ipv4'\]\['address'\]/inventory_hostname/" /home/ubuntu/zdm-proxy-automation/ansible/rolling_restart_zdm_proxy.yml -i
+docker exec zdm-ansible-container sed "s/hostvars\[inventory_hostname\]\['ansible_default_ipv4'\]\['address'\]/inventory_hostname/" /home/ubuntu/zdm-proxy-automation/ansible/templates/zdm_proxy_immutable_config.j2 -i
+docker exec zdm-ansible-container sed "s/hostvars\[inventory_hostname\]\['ansible_default_ipv4'\]\['address'\]/inventory_hostname/" /home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml -i
+docker exec zdm-ansible-container sed "s/hostvars\[inventory_hostname\]\['ansible_default_ipv4'\]\['address'\]/inventory_hostname/" /home/ubuntu/zdm-proxy-automation/ansible/rolling_restart_zdm_proxy.yml -i
 ```
 
 ### Configure, deploy and start ZDM proxy
