@@ -52,6 +52,10 @@ _Note_: the monitoring stack is left out of this picture for clarity.
 _Note_: some of the following commands do `sudo` things to the base machine and are tailored to Gitpod.
 Careful if trying this on your laptop.
 
+Ctrl-click and "open in new tab" the following button to start:
+
+[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/hemidactylus/zdm-scenario-draft)
+
 ## (HIDDEN) Initial setup
 
 ### (HIDDEN) Initial setup, Origin Cassandra
