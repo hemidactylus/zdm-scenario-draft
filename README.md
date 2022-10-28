@@ -37,9 +37,7 @@ containerization layer beyond our jurisdiction), we had to find a compromise:
 namely, _instead of three Ubuntu containers playing the role of ZDM host machines,_
 _we will use the base machine itself as the one ZDM host._
 
-**TODO** architecture diagram to change
-
-![Scenario architecture](pictures/zdm-scenario-architecture.png)
+![Scenario architecture](pictures/zdm-scenario-architecture-gitpod.png)
 
 The "base machine" (the only physical machine in the scenario) runs Docker for use by non-superuser.
 At this layer a sample API runs, connected alternatively to Origin/Target/Proxy and probed by simple `curl`.
