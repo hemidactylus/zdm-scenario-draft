@@ -49,9 +49,12 @@ To allow for connectivity (including back to the base machine),
 the `host` Docker network will be used throughout.
 _Note_: the monitoring stack is left out of this picture for clarity.
 
+_Note_: some of the following commands do `sudo` things to the base machine and are tailored to Gitpod.
+Careful if trying this on your laptop.
+
 ## (HIDDEN) Initial setup
 
-### (HIDDEN) Initial setup, network+origin
+### (HIDDEN) Initial setup, Origin Cassandra
 
 > Create password-enabled Cassandra for Origin:
 
@@ -80,6 +83,7 @@ docker run --name cassandra-origin-2 -d -e CASSANDRA_SEEDS=`docker inspect cassa
 > When the `nodetool` above gives two `UN`s, proceed:
 
 ```
+# HIDDEN
 docker run --name cassandra-origin-3 -d -e CASSANDRA_SEEDS=`docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.bridge.IPAddress'` cassandra-auth:4.1
 ```
 
@@ -88,6 +92,25 @@ docker run --name cassandra-origin-3 -d -e CASSANDRA_SEEDS=`docker inspect cassa
 **TODO** make this cluster creation as short as possible. Now it takes several minutes (which would be spent by the user reading an intro page or something)
 
 **TODO** Also consider making it into a single-node cluster (?) for speed and load on gitpod.
+
+### (HIDDEN) Initial setup, data in Origin
+
+> Copy the init scripts to origin node 1 and execute them on a cluster node:
+
+```
+# HIDDEN
+docker cp origin_prepare/origin_schema.cql cassandra-origin-1:/
+docker cp origin_prepare/origin_populate.cql cassandra-origin-1:/
+docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -f /origin_schema.cql
+docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -f /origin_populate.cql
+```
+
+> Check with
+
+```
+# HIDDEN
+docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -e "select * from my_application_ks.user_status where user='eva';"
+```
 
 ### (HIDDEN) Initial setup, dependencies for client application
 
@@ -98,28 +121,11 @@ pip install -r client_application/requirements.txt
 
 > _Note_: in local machine, please do use a virtualenv for this.
 
-### (HIDDEN) Initial setup, data in Origin
-
-> Copy the init scripts to origin node 1 and execute them on a cluster node:
-
-```
-docker cp origin_prepare/origin_schema.cql cassandra-origin-1:/
-docker cp origin_prepare/origin_populate.cql cassandra-origin-1:/
-docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -f /origin_schema.cql
-docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -f /origin_populate.cql
-```
-
-> Check with
-
-```
-docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -e "select * from my_application_ks.user_status where user='eva';"
-```
-
 ### (HIDDEN) Initial setup, ensure base machine runs ssh server
 
-**TODO** this is Gitpod-only
-
 ```
+# HIDDEN
+
 DEBIAN_FRONTEND=noninteractive TZ=Europe/London sudo apt install openssh-server -y
 sudo sed 's/#PermitRootLogin prohibit-password/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config -i
 sudo sed 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config -i
@@ -137,11 +143,7 @@ sudo service ssh restart
 chmod 400 zdm_host_private_key/zdm_deploy_key
 ```
 
-Now you can `ssh -i zdm_host_private_key/zdm_deploy_key gitpod@172.17.0.1 -o StrictHostKeyChecking=no`.
-
-**TODO** user there is `gitpod`, check later
-
-**TODO** use the `. find_addresses.sh` script for IP addresses env var and output
+> Now you can `ssh -i zdm_host_private_key/zdm_deploy_key gitpod@172.17.0.1 -o StrictHostKeyChecking=no` (and with `root` as well).
 
 ### (HIDDEN) Initial setup, handle for monitoring stack
 
@@ -149,33 +151,39 @@ Now you can `ssh -i zdm_host_private_key/zdm_deploy_key gitpod@172.17.0.1 -o Str
 
 ## Preliminary steps
 
-**TODO** here describe the infrastructure to user and provide them with the
-IP-addresses script and have them run it.
+Remember at any time you can source `. find_addresses.sh` to view the IP addresses of
+the involved machines, exporting them as environment variables for your convenience as well.
 
-### Get your Astra DB ready
+### Get your Astra DB (Target) ready
 
 - Create Astra DB (with `my_application_ks` keyspace);
 - Retrieve Secure Connect Bundle;
 - Retrieve a token with "R/W User" role;
 - Find the "Database ID" for your Astra DB instance;
-- Create Schema within keyspace (see below).
+- Create Schema within keyspace (using e.g. the Web CQL Console, see next paragraph).
 
 **TODO**. **Warning**: with the "R/W User" token, you cannot create the schema in any other
 way than on the CQL Web Console. For the time being, we stick to it, so:
 Go to CQL Console and copy-paste the contents of `target/prepare/target_schema.cql`
+
+_Alternative way (requires a DB Admin token):_
+
+```
+curl -Ls "https://dtsx.io/get-astra-cli" | bash
+. ~/.bashrc ; astra setup     # provide your AstraCS:... "DB Admin" token when prompted
+astra db cqlsh <DB_NAME> -f target/prepare/target_schema.cql
+```
 
 ### Have a client application running
 
 On the base machine, run an API which connects to the DB (for now, Origin, but easy
 to switch). The API will be able to read and write, reachable with simple `curl` commands.
 
-Get the IP of the origin-1 machine, **TODO** this would be hidden and replaced by a simple script printing the IPs (no need for user to know the internals)
-
 ```
 cd client_application
 ```
 
-Prepare `.env` by copying `cp .env.sample .env` and editing it:
+Prepare `.env` by copying `cp .env.sample .env` and editing it (e.g. `gp open .env`):
 
 - insert the IPs of the Cassandra seed and the ZDM host, as read by `. ../find_addresses.sh`, in `CASSANDRA_SEED` and `ZDM_PROXY_SEED`;
 - insert `ASTRA_DB_SECURE_BUNDLE_PATH`, `ASTRA_DB_CLIENT_ID`, `ASTRA_DB_CLIENT_SECRET` for your connection to Astra DB.
@@ -194,10 +202,6 @@ curl -s -XPOST localhost:8000/status/eva/ItIs_`date +'%H-%M-%S'` | jq
 ```
 
 **TODO** Make these curl into a bash loop-with-sleep?
-
-**TODO** Different keyspace names, possible? We sure don't do that here, we could have a global keyspace name in `.env` for that matter.
-
-**TODO** Confirm that to connect to ZDM a single seed is OK and the rest is discovered?
 
 ## Phase 1: Connect clients to ZDM Proxy
 
@@ -244,12 +248,17 @@ A `zdm-ansible-container` container is created and started for you (on the base 
 > container's `/home/ubuntu/zdm-proxy-automation/ansible/deploy_zdm_proxy.yml` are:
 > (1) `- name: Add Docker GPG apt Key`, (2) `- name: Add Docker Repository`.
 > (3) `- name: Update apt and install docker-ce` and (4) `- name: Uninstall incompatible Docker-py Module`.
+> Likewise, we shall remove the `- name: Uninstall incompatible Docker-py Module` task
+> from the `/home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml` playbook.
+
 
 ```
 # (HIDDEN)
 docker exec -it zdm-ansible-container bash
 # once in ...
 nano /home/ubuntu/zdm-proxy-automation/ansible/deploy_zdm_proxy.yml
+# (comment the tasks, save and exit)
+nano /home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml
 # (comment the tasks, save and exit)
 exit # the container
 ```
@@ -270,7 +279,6 @@ exit # the container
 would use eth0 or something, hence 10.0.5.2 or something. Not the docker0 one (known to ansible in different ways).
 So we also edit file `templates/zdm_proxy_immutable_config.j2`, replacing `hostvars[inventory_hostname]['ansible_default_ipv4']['address']` with `inventory_hostname` (3 locations).
 Same for the rolling update and restart.
-**TODO** check if this might suggest a generalization of the playbook useful beyond the scenario.
 
 ```
 # (HIDDEN)
@@ -314,7 +322,7 @@ and watch the show.
 
 ### Deploy the monitoring stack
 
-**TODO** as soon as the `systemd` requirement is met in the Ubuntu box containers.
+**TODO** We wait for the monitoring stack to be containerized in the ZDM Proxy deploy flow to add this.
 
 ### Connect client applications to proxy
 
@@ -351,8 +359,8 @@ After this finishes, you can start the migration, providing the necessary
 connection and schema information (the "import cluster" will be Origin and
 the "export cluster" will be Astra DB):
 
-**TODO** remind user of the info-collecting script here, but have them fill
-out the command below themselves, for better understanding:
+**Note**: check the contents of `client_application/.env` and the output
+of `. find_addresses.sh` to quickly retrieve the required information.
 
 ```
 java -jar target/dsbulk-migrator-1.0.0-SNAPSHOT-embedded-dsbulk.jar \
@@ -374,17 +382,18 @@ you decide to cut over and neglect Origin altogether.
 
 ## Phase 3: Enable asynchronous dual reads
 
-**TODO**: to keep an eye on proxy restarts and everything,
-it might be desirable to keep a view on `sudo docker logs -f ...`
-commands on the ZDM Proxy containers.
-To stick to real life, this is better achieved instructing the user
-to ssh and then call `sudo docker logs` (as opposed to the shortcut):
+It is desirable to keep an eye on the proxy logs
+during updates to its configuration.
+Even if in this demo setup the proxy actually runs on the host machine itself,
+we will go through the motions of a real ZDM deployment, that is, we first
+`ssh` to "the proxy host" and once there we inspect the logs of the
+proxy running Docker container:
 
 ```
 # In a new console:
 ssh -i zdm_host_private_key/zdm_deploy_key gitpod@$ZDM_HOST_IP -o StrictHostKeyChecking=no
 # once there...
-docker logs -f zdm-proxy-container
+docker logs -f zdm-proxy-container    # you would prepend with 'sudo' in other setups
 ```
 
 To enable read mirroring, open a shell in the `zdm-ansible-container` and edit
@@ -398,11 +407,6 @@ nano ansible/vars/zdm_proxy_core_config.yml   # or use 'vi' if you prefer
 
 The `primary_cluster` should still be `ORIGIN` at this point. Change the
 `read_mode` from `PRIMARY_ONLY` to `DUAL_ASYNC_ON_SECONDARY`.
-
-> **TODO** this playbook does not install (the regular, undesired here) docker-ce,
-> but it uninstalls a "python incompatible module", which we would like to remove here as well.
-> This means we should comment task `- name: Uninstall incompatible Docker-py Module` from
-> the `/home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml` playbook.
 
 While still in the Ansible container, launch a rolling update of the ZDM containers with:
 

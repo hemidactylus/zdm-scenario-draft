@@ -12,12 +12,12 @@ load_dotenv()
 ASTRA_DB_SECURE_BUNDLE_PATH = os.environ['ASTRA_DB_SECURE_BUNDLE_PATH']
 ASTRA_DB_CLIENT_ID = os.environ['ASTRA_DB_CLIENT_ID']
 ASTRA_DB_CLIENT_SECRET = os.environ['ASTRA_DB_CLIENT_SECRET']
-ASTRA_DB_KEYSPACE = os.environ['ASTRA_DB_KEYSPACE']
 #
 CASSANDRA_SEED = os.environ['CASSANDRA_SEED']
 CASSANDRA_USERNAME = os.environ['CASSANDRA_USERNAME']
 CASSANDRA_PASSWORD = os.environ['CASSANDRA_PASSWORD']
-CASSANDRA_KEYSPACE = os.environ['CASSANDRA_KEYSPACE']
+#
+KEYSPACE_NAME = os.environ['KEYSPACE_NAME']
 #
 ZDM_PROXY_SEED = os.environ['ZDM_PROXY_SEED']
 
@@ -45,7 +45,7 @@ def get_session(mode):
                     CASSANDRA_PASSWORD,
                 ),
             )
-            session = cluster.connect(CASSANDRA_KEYSPACE)
+            session = cluster.connect(KEYSPACE_NAME)
         elif mode == 'ASTRA_DB':
             cluster = Cluster(
                 cloud={
@@ -56,7 +56,7 @@ def get_session(mode):
                     ASTRA_DB_CLIENT_SECRET,
                 ),
             )
-            session = cluster.connect(ASTRA_DB_KEYSPACE)
+            session = cluster.connect(KEYSPACE_NAME)
         elif mode == 'ZDM_PROXY':
             cluster = Cluster(
                 [ZDM_PROXY_SEED],
@@ -65,7 +65,7 @@ def get_session(mode):
                     ASTRA_DB_CLIENT_SECRET,
                 ),
             )
-            session = cluster.connect(ASTRA_DB_KEYSPACE)
+            session = cluster.connect(KEYSPACE_NAME)
         else:
             raise ValueError(f'Unknown session mode {mode}')
         #
