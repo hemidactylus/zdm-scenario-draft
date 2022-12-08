@@ -149,7 +149,7 @@ chmod 400 zdm_host_private_key/zdm_deploy_key
 
 ### (HIDDEN) Initial setup, handle for monitoring stack
 
-**TODO**: deal with the monitoring machine (an image with `systemd` is needed, no need for DinD there).
+Nothing to do here.
 
 ## Preliminary steps
 
@@ -220,9 +220,9 @@ will then deploy the ZDM proxies. On the base machine, from the repo's root:
 
 ```
 cd running_zdm_util
-wget https://github.com/datastax/zdm-proxy-automation/releases/download/v2.0.0/zdm-util-linux-amd64-v2.0.0.tgz
-tar -xvf zdm-util-linux-amd64-v2.0.0.tgz
-rm zdm-util-linux-amd64-v2.0.0.tgz 
+wget https://github.com/datastax/zdm-proxy-automation/releases/download/v2.0.3/zdm-util-linux-amd64-v2.0.3.tgz
+tar -xvf zdm-util-linux-amd64-v2.0.3.tgz
+rm zdm-util-linux-amd64-v2.0.3.tgz
 ```
 
 You will have to provide the following answers:
@@ -231,37 +231,16 @@ You will have to provide the following answers:
 - the network prefix for the ZDM host: if, for example, your ZDM host is `172.17.0.1` (as seen by `. ../find_addresses.sh`), you can provide `172.17.0.*` here;
 - no, you don't have an inventory file yet;
 - yes, this is for testing (so as to allow for a single ZDM host instead of the required three);
-- enter the IP for the ZDM host (see **TODO** above);
-- **TODO** the monitoring machine when it's there.
+- enter the IP for the ZDM host;
+- enter the same IP as above for the monitoring instance (in this setup, it will be the same machine).
 
 Now run:
 
 ```
-./zdm-util-v2.0.0
+./zdm-util-v2.0.3
 ```
 
 A `zdm-ansible-container` container is created and started for you (on the base machine's Docker).
-
-(HIDDEN) Tweak the playbook:
-
-> We also need to comment out, behind-the-scenes, some tasks in the Ansible install playbook,
-> which would install Docker. This should happen
-> before the user launches the Ansible playbook. Namely, the tasks to comment from the Ansible
-> container's `/home/ubuntu/zdm-proxy-automation/ansible/deploy_zdm_proxy.yml` are:
-> (1) `- name: Add Docker GPG apt Key`, (2) `- name: Add Docker Repository`.
-> (3) `- name: Update apt and install docker-ce` and (4) `- name: Uninstall incompatible Docker-py Module`.
-> Likewise, we shall remove the `- name: Uninstall incompatible Docker-py Module` task
-> from the `/home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml` playbook.
-> This tweak is automated with the help of a file-editing script:
-
-
-```
-# HIDDEN
-# removing unwanted tasks from playbooks
-docker cp ../file_utils/block_remover.sh zdm-ansible-container:/home/ubuntu
-docker exec zdm-ansible-container /home/ubuntu/block_remover.sh "Add Docker GPG apt Key" "Install Docker Module for Python" /home/ubuntu/zdm-proxy-automation/ansible/deploy_zdm_proxy.yml
-docker exec zdm-ansible-container /home/ubuntu/block_remover.sh "Uninstall incompatible Docker-py Module" "Install Docker Module for Python" /home/ubuntu/zdm-proxy-automation/ansible/rolling_update_zdm_proxy.yml
-```
 
 (HIDDEN) Also we must change the non-root user in the "ZDM host" (actually the Gitpod instance)
 to be `gitpod` and not `ubuntu`. This affects the inventory and the root-dir setting in the vars:
@@ -270,6 +249,8 @@ to be `gitpod` and not `ubuntu`. This affects the inventory and the root-dir set
 # (HIDDEN)
 docker exec zdm-ansible-container sed -i 's/ansible_user=ubuntu/ansible_user=gitpod/' /home/ubuntu/zdm-proxy-automation/ansible/zdm_ansible_inventory
 docker exec zdm-ansible-container sed 's/home\/ubuntu/home\/gitpod/' /home/ubuntu/zdm-proxy-automation/ansible/vars/zdm_playbook_internal_config.yml -i
+
+docker exec zdm-ansible-container sed 's/_user_name: ubuntu/_user_name: gitpod/' /home/ubuntu/zdm-proxy-automation/ansible/vars/zdm_playbook_internal_config.yml -i
 ```
 
 (HIDDEN) More trouble with the network interfaces and ipv4 addresses. The default_ipv4 from the ansible templates
@@ -286,7 +267,7 @@ docker exec zdm-ansible-container sed "s/hostvars\[inventory_hostname\]\['ansibl
 
 ### Configure, deploy and start ZDM proxy
 
-Go to a shell on the `adm-ansible-container` with:
+Go to a shell on the `zdm-ansible-container` with:
 
 ```
 docker exec -it zdm-ansible-container bash
@@ -302,7 +283,7 @@ nano ansible/vars/zdm_proxy_core_config.yml   # or use 'vi' if you prefer
 Uncomment and edit the following entries:
 
 - `origin_username` and `origin_password`: set both to "cassandra" (no quotes);
-- `origin_contact_points`: set it to the IP of `cassandra-origin-1`. **TODO** that would be the output of `docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.zdm_network.IPAddress'`, but we will provide it to the user - no need for them to see behind the scenes;
+- `origin_contact_points`: set it to the IP of `cassandra-origin-1`. **TODO** that would be the output of `docker inspect cassandra-origin-1 | jq -r '.[].NetworkSettings.Networks.bridge.IPAddress'`, but we will provide it to the user - no need for them to see behind the scenes;
 - `origin_port`: set to 9042;
 - `target_username` and `target_password`: set to Client ID and Client Secret from your Astra DB "R/W User Token";
 - `target_astra_db_id` is your Database ID from the Astra DB dashboard;
@@ -319,7 +300,31 @@ and watch the show.
 
 ### Deploy the monitoring stack
 
-**TODO** We wait for the monitoring stack to be containerized in the ZDM Proxy deploy flow to add this.
+Stay in the `zdm-ansible-container` a little more.
+
+Edit file `zdm-proxy-automation/ansible/vars/zdm_monitoring_config.yml`: leave
+the `grafana_admin_user` to `admin` but set `grafana_admin_password`
+to your choice.
+
+Now launch the playbook that sets up the monitoring stack: while still in the container:
+
+```
+cd /home/ubuntu/zdm-proxy-automation/ansible
+ansible-playbook deploy_zdm_monitoring.yml -i zdm_ansible_inventory
+```
+
+and enjoy the show.
+
+#### Check the Grafana dashboard
+
+Run in the Gitpod host the following:
+
+```
+gp preview --external `gp url 3000`
+```
+
+and *CHECK YOUR POPUP BLOCKER* to open the tab. Log in with `admin` and the password you chose,
+then go to Dashboards/Manage and pick e.g. the "ZDM Proxy Dashboard v1" to see nice plots.
 
 ### Connect client applications to proxy
 
@@ -357,7 +362,7 @@ connection and schema information (the "import cluster" will be Origin and
 the "export cluster" will be Astra DB):
 
 **Note**: check the contents of `client_application/.env` and the output
-of `. find_addresses.sh` to quickly retrieve the required information.
+of `. ../../find_addresses.sh` to quickly retrieve the required information.
 
 ```
 java -jar target/dsbulk-migrator-1.0.0-SNAPSHOT-embedded-dsbulk.jar \
@@ -388,9 +393,9 @@ proxy running Docker container:
 
 ```
 # In a new console:
-ssh -i zdm_host_private_key/zdm_deploy_key gitpod@$ZDM_HOST_IP -o StrictHostKeyChecking=no
+ssh -i /workspace/zdm-scenario-draft/zdm_host_private_key/zdm_deploy_key gitpod@$ZDM_HOST_IP -o StrictHostKeyChecking=no
 # once there...
-docker logs -f zdm-proxy-container    # you would prepend with 'sudo' in other setups
+docker logs -f zdm-proxy-container
 ```
 
 To enable read mirroring, open a shell in the `zdm-ansible-container` and edit
@@ -402,6 +407,7 @@ cd zdm-proxy-automation/
 nano ansible/vars/zdm_proxy_core_config.yml   # or use 'vi' if you prefer
 ```
 
+Scrll down to the `READ ROUTING CONFIGURATION` section.
 The `primary_cluster` should still be `ORIGIN` at this point. Change the
 `read_mode` from `PRIMARY_ONLY` to `DUAL_ASYNC_ON_SECONDARY`.
 
@@ -413,7 +419,7 @@ ansible-playbook rolling_update_zdm_proxy.yml -i zdm_ansible_inventory
 ```
 
 The logs from the containers will stop one after the other: if you restart the
-`sudo docker logs` commands, you will see a very long line being logged that starts
+`docker logs` commands, you will see a very long line being logged that starts
 with something like
 
 ```
@@ -437,6 +443,11 @@ the new setting being logged. Also send some requests to your API as before.
 
 Now, Target is the functioning primary, but origin is still being kept
 completely up to date.
+
+For a proof, launch this in the Gitpod host after sending a couple of API write requests:
+```
+docker exec -it cassandra-origin-1 cqlsh -u cassandra -p cassandra -e "SELECT * FROM my_application_ks.user_status;"
+```
 
 ## Phase 5: Connect your client applications directly to Target
 
@@ -467,15 +478,25 @@ In a real migration scenario, you would also decommission the machines running
 the ZDM hosts and even the Origin Cassandra cluster. In this demo you can skip
 these steps (they will be removed anyway when the exercise is over).
 
-> In case cleanup is needed, six machines and one Docker network can be
+> In case cleanup is needed, the machines(/containers) can be
 > destroyed at this point:
 
 ```
 # HIDDEN
 docker rm -f zdm-proxy-container
+VOLUME_CASSANDRA_ORIGIN_1=`docker inspect cassandra-origin-1 | jq -r '.[].Mounts[0].Name'`
+VOLUME_CASSANDRA_ORIGIN_2=`docker inspect cassandra-origin-2 | jq -r '.[].Mounts[0].Name'`
+VOLUME_CASSANDRA_ORIGIN_3=`docker inspect cassandra-origin-3 | jq -r '.[].Mounts[0].Name'`
 docker rm -f cassandra-origin-1
 docker rm -f cassandra-origin-2
 docker rm -f cassandra-origin-3
+docker volume rm ${VOLUME_CASSANDRA_ORIGIN_1} ${VOLUME_CASSANDRA_ORIGIN_2} ${VOLUME_CASSANDRA_ORIGIN_3}
+```
+
+Likewise, there's no need to keep the monitoring stack containers:
+```
+docker rm -f zdm-grafana-container zdm-prometheus-container zdm-node-exporter-container
+docker volume rm zdm-prometheus-metrics-volume
 ```
 
 Congratulations, you completed the ZDM Migration Scenario!
