@@ -358,8 +358,8 @@ mvn clean package
 ```
 
 After this finishes, you can start the migration, providing the necessary
-connection and schema information (the "import cluster" will be Origin and
-the "export cluster" will be Astra DB):
+connection and schema information (the "export cluster" will be Origin and
+the "import cluster" will be Astra DB):
 
 **Note**: check the contents of `client_application/.env` and the output
 of `. ../../find_addresses.sh` to quickly retrieve the required information.
