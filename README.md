@@ -1,3 +1,14 @@
+```
+NOTICE: this was the draft design for a Katapod scenario.
+DEVELOPMENT OF THIS REPO IS FROZEN.
+
+For a non-Katapod three-proxy version that you can run on your laptop, check out the "local-three-proxies" tag:
+https://github.com/hemidactylus/zdm-scenario-draft/releases/tag/local-three-proxies
+(not necessarily up to date with the latest on ZDM).
+
+For the Katapod scenario, go here: https://github.com/hemidactylus/zdm-scenario-katapod
+```
+
 # ZDM Scenario
 
 The following is a fully Dockerized ZDM scenario,
